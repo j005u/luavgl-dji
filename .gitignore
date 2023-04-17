@@ -1,4 +1,5 @@
 /build
+/gogglesbuild
 /.vscode
 # Prerequisites
 *.d

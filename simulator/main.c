@@ -5,8 +5,6 @@
                             issue*/
 #include "demos/lv_demos.h"
 #include "examples/lv_examples.h"
-#include "sdl/sdl.h"
-#include <SDL2/SDL.h>
 #include <lvgl.h>
 
 #include <lua.h>
@@ -16,6 +14,9 @@
 
 #include <luavgl.h>
 #include "extension.h"
+
+#include "hw/dji_display.h"
+#include "hw/dji_services.h"
 
 typedef struct {
   lua_State *L;
@@ -28,28 +29,58 @@ typedef struct {
   delete_font_cb delete_font;
 } luavgl_args_t;
 
+#define WIDTH 1440
+#define HEIGHT 810
+#define BYTES_PER_PIXEL 4
+#define PLANE_ID 6
+#define BUFSIZE WIDTH * 100
+
+
+static dji_display_state_t *dji_display;
+static void *fb0_addr;
+static void *fb1_addr;
+static int whichfb = 0;
+
+
+void dji_display_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_p) {
+  //printf("%p - %p - %p\n", fb0_addr, fb1_addr, (void*)color_p);
+  //printf("%d %d %d %d\n", area->x1, area->x2, area->y1, area->y2);
+  void* fb=(whichfb?fb0_addr:fb1_addr);
+  for(int y=0;y<area->y2-area->y1; y++) {
+    memcpy(fb+(y*WIDTH)+area->x1, color_p, area->x2-area->x1);
+  }
+
+  dji_display_push_frame(dji_display, ((void*)fb0_addr == (void*)color_p ? 0 : 1));
+  whichfb = !whichfb;
+  lv_disp_flush_ready(drv);
+}
+
 /**
  * Initialize the Hardware Abstraction Layer (HAL) for the LVGL graphics
  * library
  */
 static void hal_init(void)
 {
-  /* Use the 'monitor' driver which creates window on PC's monitor to simulate a
-   * display*/
-  sdl_init();
+  dji_display = dji_display_state_alloc(dji_goggles_are_v2());
+  dji_display_open_framebuffer(dji_display, PLANE_ID);
 
   /*Create a display buffer*/
+  static lv_color_t buf1_1[BUFSIZE];
+  static lv_color_t buf1_2[BUFSIZE];
   static lv_disp_draw_buf_t disp_buf1;
-  static lv_color_t buf1_1[SDL_HOR_RES * SDL_VER_RES];
-  lv_disp_draw_buf_init(&disp_buf1, buf1_1, NULL, SDL_HOR_RES * SDL_VER_RES);
+  fb0_addr = dji_display_get_fb_address(dji_display, 0);
+  fb1_addr = dji_display_get_fb_address(dji_display, 1);
+  memset(fb0_addr, 0x000000FF, WIDTH * HEIGHT * BYTES_PER_PIXEL);
+  memset(fb1_addr, 0x000000FF, WIDTH * HEIGHT * BYTES_PER_PIXEL);
+  lv_disp_draw_buf_init(&disp_buf1, buf1_1, buf1_2, BUFSIZE);
 
   /*Create a display*/
   static lv_disp_drv_t disp_drv;
   lv_disp_drv_init(&disp_drv); /*Basic initialization*/
   disp_drv.draw_buf = &disp_buf1;
-  disp_drv.flush_cb = sdl_display_flush;
-  disp_drv.hor_res = SDL_HOR_RES;
-  disp_drv.ver_res = SDL_VER_RES;
+  disp_drv.flush_cb = dji_display_flush;
+  disp_drv.hor_res = WIDTH;
+  disp_drv.ver_res = HEIGHT;
 
   lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
 
@@ -61,38 +92,7 @@ static void hal_init(void)
   lv_group_t *g = lv_group_create();
   lv_group_set_default(g);
 
-  /* Add the mouse as input device
-   * Use the 'mouse' driver which reads the PC's mouse*/
-  static lv_indev_drv_t indev_drv_1;
-  lv_indev_drv_init(&indev_drv_1); /*Basic initialization*/
-  indev_drv_1.type = LV_INDEV_TYPE_POINTER;
 
-  /*This function will be called periodically (by the library) to get the mouse
-   * position and state*/
-  indev_drv_1.read_cb = sdl_mouse_read;
-  lv_indev_t *mouse_indev = lv_indev_drv_register(&indev_drv_1);
-
-  static lv_indev_drv_t indev_drv_2;
-  lv_indev_drv_init(&indev_drv_2); /*Basic initialization*/
-  indev_drv_2.type = LV_INDEV_TYPE_KEYPAD;
-  indev_drv_2.read_cb = sdl_keyboard_read;
-  lv_indev_t *kb_indev = lv_indev_drv_register(&indev_drv_2);
-  lv_indev_set_group(kb_indev, g);
-
-  static lv_indev_drv_t indev_drv_3;
-  lv_indev_drv_init(&indev_drv_3); /*Basic initialization*/
-  indev_drv_3.type = LV_INDEV_TYPE_ENCODER;
-  indev_drv_3.read_cb = sdl_mousewheel_read;
-  lv_indev_t *enc_indev = lv_indev_drv_register(&indev_drv_3);
-  lv_indev_set_group(enc_indev, g);
-
-  /*Set a cursor for the mouse*/
-  LV_IMG_DECLARE(mouse_cursor_icon); /*Declare the image file.*/
-  lv_obj_t *cursor_obj =
-      lv_img_create(lv_scr_act()); /*Create an image object for the cursor */
-  lv_img_set_src(cursor_obj, &mouse_cursor_icon); /*Set the image source*/
-  lv_indev_set_cursor(mouse_indev,
-                      cursor_obj); /*Connect the image  object to the driver*/
 }
 
 /*
@@ -309,7 +309,8 @@ int main(int argc, char **argv)
 {
   (void)argc; /*Unused*/
   (void)argv; /*Unused*/
-
+  dji_stop_goggles(dji_goggles_are_v2());
+  usleep(1000000);
   /*Initialize LVGL*/
   lv_init();
 
@@ -335,6 +336,9 @@ int main(int argc, char **argv)
     lv_timer_handler();
     usleep(5 * 1000);
   }
+
+  dji_display_close_framebuffer(dji_display);
+  dji_display_state_free(dji_display);
 
   return 0;
 }

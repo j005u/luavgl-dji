@@ -7,3 +7,6 @@
 [submodule "deps/lua-compat-5.3"]
 	path = deps/lua-compat-5.3
 	url = https://github.com/lunarmodules/lua-compat-5.3.git
+[submodule "deps/Lua"]
+	path = deps/Lua
+	url = https://github.com/walterschell/Lua.git
