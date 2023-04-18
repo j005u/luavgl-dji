@@ -17,7 +17,6 @@
 
 #include "hw/dji_display.h"
 #include "hw/dji_services.h"
-#include "evdev.h"
 
 typedef struct {
   lua_State *L;
@@ -41,27 +40,48 @@ static dji_display_state_t *dji_display;
 static void *fb0_addr;
 static void *fb1_addr;
 static int whichfb = 0;
-static lv_indev_t * keypad_indev;
-
-/*static lv_color_t buf1_1[BUFSIZE];
-static lv_color_t buf1_2[BUFSIZE];*/
-
-void dji_set_px_cb(lv_disp_drv_t * disp_drv, uint8_t * buf, lv_coord_t buf_w, lv_coord_t x, lv_coord_t y, lv_color_t color, lv_opa_t opa)
-{
-   buf += (y * WIDTH + x)*BYTES_PER_PIXEL;
-   lv_color_t *pixel = (lv_color_t *)buf;
-   *pixel = color;
-   buf[3] = ~opa;
-}
+static lv_color_t buf1_1[BUFSIZE];
+static lv_color_t buf1_2[BUFSIZE];
 
 void dji_display_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_p) {
   //printf("%p - %p - %p\n", fb0_addr, fb1_addr, (void*)color_p);
   //printf("x1 - %d \t x2 \t - %d \t y1 - %d \t y2 %d\n", area->x1, area->x2, area->y1, area->y2);
   //printf("w - %d \t h - %d\n", area->x2 - area->x1, area->y2 - area->y1);
   void* fb = (whichfb ? fb0_addr : fb1_addr);
+  //int copylen = (area->x2 - area->x1)*BYTES_PER_PIXEL;
+
+  /*uint32_t pixel_x = (x * display_info->font_width) + display_info->x_offset;
+  uint32_t pixel_y = (y * display_info->font_height) + display_info->y_offset;
+  uint32_t character_offset = (((display_info->font_height * display_info->font_width) * BYTES_PER_PIXEL) * c);
+  for(uint8_t gx = 0; gx < display_info->font_width; gx++) {
+      for(uint8_t gy = 0; gy < display_info->font_height; gy++) {
+          uint32_t font_offset = character_offset + (gy * display_info->font_width * BYTES_PER_PIXEL) + (gx * BYTES_PER_PIXEL);
+          uint32_t target_offset = ((((pixel_x + gx) * BYTES_PER_PIXEL) + ((pixel_y + gy) * WIDTH * BYTES_PER_PIXEL)));
+          *((uint8_t *)fb_addr + target_offset) = *(uint8_t *)((uint8_t *)font + font_offset + 2);
+          *((uint8_t *)fb_addr + target_offset + 1) = *(uint8_t *)((uint8_t *)font + font_offset + 1);
+          *((uint8_t *)fb_addr + target_offset + 2) = *(uint8_t *)((uint8_t *)font + font_offset);
+          *((uint8_t *)fb_addr + target_offset + 3) = ~*(uint8_t *)((uint8_t *)font + font_offset + 3);
+      }
+  }*/
+
+  const uint32_t bufwidth = area->x2 - area->x1;
+  const uint32_t bufheight = area->y2 - area->y1;
+  for(uint32_t y=0;y<bufheight; y++) {
+    for(uint32_t x=0;x<bufwidth; x++) {
+      uint8_t * sp = (uint8_t *)((uint32_t)color_p) + (((y * bufwidth) + x) * BYTES_PER_PIXEL);
+      uint8_t * dp = fb + ((((y + area->y1) * WIDTH) + (x + area->x1)) * BYTES_PER_PIXEL);
+
+      dp[0] = sp[0];
+      dp[1] = sp[1];
+      dp[2] = sp[2];
+      dp[3] = ~sp[3];
+      //dp[3] = 0xff;
+
+    }
+  }
 
   if(lv_disp_flush_is_last(drv)) {
-    dji_display_push_frame(dji_display, whichfb);
+    dji_display_push_frame(dji_display, ((void*)buf1_1 == (void*)color_p ? 0 : 1));
     whichfb = !whichfb;
   }
 
@@ -72,7 +92,7 @@ void dji_display_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t *
  * Initialize the Hardware Abstraction Layer (HAL) for the LVGL graphics
  * library
  */
-static void hal_init((*feedback_cb)(struct _lv_indev_drv_t *, uint8_t))
+static void hal_init(void)
 {
   dji_display = dji_display_state_alloc(dji_goggles_are_v2());
   dji_display_open_framebuffer(dji_display, PLANE_ID);
@@ -84,7 +104,7 @@ static void hal_init((*feedback_cb)(struct _lv_indev_drv_t *, uint8_t))
   fb1_addr = dji_display_get_fb_address(dji_display, 1);
   memset(fb0_addr, 0x000000FF, WIDTH * HEIGHT * BYTES_PER_PIXEL);
   memset(fb1_addr, 0x000000FF, WIDTH * HEIGHT * BYTES_PER_PIXEL);
-  lv_disp_draw_buf_init(&disp_buf1, fb0_addr, fb1_addr, WIDTH * HEIGHT * BYTES_PER_PIXEL);
+  lv_disp_draw_buf_init(&disp_buf1, buf1_1, buf1_2, BUFSIZE);
 
   /*Create a display*/
   static lv_disp_drv_t disp_drv;
@@ -93,8 +113,6 @@ static void hal_init((*feedback_cb)(struct _lv_indev_drv_t *, uint8_t))
   disp_drv.flush_cb = dji_display_flush;
   disp_drv.hor_res = WIDTH;
   disp_drv.ver_res = HEIGHT;
-  disp_drv.set_px_cb = dji_set_px_cb;
-  disp_drv.full_refresh = 1;
 
   lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
 
@@ -103,20 +121,10 @@ static void hal_init((*feedback_cb)(struct _lv_indev_drv_t *, uint8_t))
       LV_THEME_DEFAULT_DARK, LV_FONT_DEFAULT);
   lv_disp_set_theme(disp, th);
 
-
-
-  evdev_init();
-  lv_indev_drv_t indev_drv;
-  lv_indev_drv_init(&indev_drv);
-  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
-  indev_drv.read_cb = evdev_read;
-  indev_drv.feedback_cb = feedback_cb;
-  keypad_indev = lv_indev_drv_register(&indev_drv);
-  
-  
   lv_group_t *g = lv_group_create();
   lv_group_set_default(g);
-  lv_indev_set_group(keypad_indev, g);
+
+
 }
 
 /*
@@ -319,35 +327,14 @@ int lua_terminate(lua_context_t *luactx)
 static lua_context_t *lua_ctx;
 static luavgl_args_t args;
 
-static void reload()
+static void reload_cb(lv_event_t *e)
 {
+  (void)e;
   if (lua_ctx != NULL) {
     lua_terminate(lua_ctx);
   }
-  //todo old group should probably be cleaned instead?
-  //if we don't init a new one here all input is lost
-  lv_group_t *g = lv_group_create();
-  lv_group_set_default(g);
-  lv_indev_set_group(keypad_indev, g);
-  
-  lua_ctx = lua_load_script(LUAVGL_EXAMPLE_DIR "/examples.lua", &args);
-}
 
-static void key_global(struct _lv_indev_drv_t *drv, uint8_t event)
-{
-      printf("event %d key %d\n", event, lv_indev_get_key(keypad_indev));
-    switch (event) {
-    /*case LV_EVENT_CLICKED: // FALL THRU
-    case LV_EVENT_LONG_PRESSED_REPEAT:
-        audio_play (sound_sinus2000hz_100ms);
-        break;
-    */
-    case 32:
-      if(lv_indev_get_key(keypad_indev) == 27) {
-        reload();
-      }
-      break;
-    }
+  lua_ctx = lua_load_script(LUAVGL_EXAMPLE_DIR "/examples.lua", &args);
 }
 
 int main(int argc, char **argv)
@@ -360,11 +347,20 @@ int main(int argc, char **argv)
   lv_init();
 
   /*Initialize the HAL (display, input devices, tick) for LVGL*/
-  hal_init(key_global);
+  hal_init();
 
   args.root = lv_scr_act();
 
   lua_ctx = lua_load_script(LUAVGL_EXAMPLE_DIR "/examples.lua", &args);
+
+  lv_obj_t *btn = lv_btn_create(lv_layer_sys());
+  lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, 0, -50);
+  lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_all(btn, 5, 0);
+  lv_obj_add_event_cb(btn, reload_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_t* label = lv_label_create(btn);
+  lv_label_set_text(label, "RELOAD");
+  lv_obj_center(label);
 
   while (1) {
     /* Periodically call the lv_task handler.

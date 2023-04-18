@@ -33,7 +33,7 @@ if (BUILD_SIMULATOR)
     add_compile_definitions(LUAVGL_EXAMPLE_DIR="/tmp/examples")
 
     add_subdirectory(deps/lvgl)
-    add_subdirectory(deps/lv_drivers)
+    #add_subdirectory(deps/lv_drivers)
     add_subdirectory(simulator)
     target_include_directories(luavgl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/deps/lvgl) # need lvgl.h
 endif(BUILD_SIMULATOR)

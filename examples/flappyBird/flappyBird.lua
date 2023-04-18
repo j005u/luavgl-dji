@@ -29,6 +29,8 @@ local function screenCreate(parent)
     local property = {
         w = 480,
         h = 480,
+        x = 480,
+        y = 165,
         bg_opa = 0,
         border_width = 0,
         pad_all = 0
@@ -491,6 +493,7 @@ end
 local function Background(root, bgEventCB)
     local bgLayer = screenCreate(root) -- background layer
     bgLayer:add_flag(lvgl.FLAG.CLICKABLE) --  we accept event here
+    lvgl.group.get_default():add_obj(bgLayer)
 
     local bg = ImageScroll(bgLayer, IMAGE_PATH .. "bg_day.png", MOVE_SPEED * 0.4, 0)
     local pipes = Pipes(bgLayer)
@@ -524,7 +527,10 @@ local function createPlayBtn(sysLayer, onEvent)
         }
     }
 
+    local g = 
     playBtn:onevent(lvgl.EVENT.PRESSED, onEvent)
+    lvgl.group.get_default():add_obj(playBtn)
+    lvgl.group.focus_obj(playBtn)
 
     return playBtn
 end
