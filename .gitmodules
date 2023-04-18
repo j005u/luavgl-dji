@@ -10,3 +10,9 @@
 [submodule "deps/Lua"]
 	path = deps/Lua
 	url = https://github.com/walterschell/Lua.git
+[submodule "deps/libxkbcommon"]
+	path = deps/libxkbcommon
+	url = https://github.com/xkbcommon/libxkbcommon
+[submodule "deps/libevdev"]
+	path = deps/libevdev
+	url = https://github.com/freedesktop/libevdev.git
